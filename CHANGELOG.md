@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.5] – 2026-05-30
+
+### Changed
+
+- Version bump.
+
+## [1.1.4] – 2026-05-30
+
+### Added
+
+- **`baseUrl` constructor option** — allows callers whose UserVoice instance is hosted on a custom domain (e.g. `https://ideas.mycompany.com`) to pass the full base URL instead of relying on `{subdomain}.uservoice.com`. `baseUrl` takes precedence over `subdomain` when both are provided. Trailing slashes are stripped automatically.
+
+### Fixed
+
+- All API calls were being sent to `{subdomain}.uservoice.com` even when the UserVoice instance is on a custom domain, causing every request to 404. This was the root cause of persistent 404 errors on the supporters endpoint for instances like `ideas.ringcentral.com`.
+
 ## [1.1.3] – 2026-05-30
 
 ### Fixed

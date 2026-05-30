@@ -17,12 +17,18 @@ export class Client {
   /**
    * @param {object}   opts
    * @param {string}   opts.subdomain    e.g. "mycompany" → mycompany.uservoice.com
+   *                                     Ignored when `baseUrl` is provided.
+   * @param {string}   [opts.baseUrl]    Full base URL for instances on a custom domain,
+   *                                     e.g. "https://ideas.mycompany.com". Takes precedence
+   *                                     over `subdomain` when supplied.
    * @param {string}   opts.token        OAuth bearer token
    * @param {import('./logger.js').Logger} opts.logger
    * @param {number}   [opts.timeoutMs]  request timeout in ms (default 15 000)
    */
-  constructor({ subdomain, token, logger, timeoutMs = DEFAULT_TIMEOUT_MS }) {
-    this.baseUrl = `https://${subdomain}.uservoice.com`;
+  constructor({ subdomain, baseUrl, token, logger, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+    this.baseUrl = baseUrl
+      ? baseUrl.replace(/\/$/, '')           // strip any trailing slash
+      : `https://${subdomain}.uservoice.com`;
     this.token = token;
     this.logger = logger;
     this.timeoutMs = timeoutMs;

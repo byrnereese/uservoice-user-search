@@ -42,7 +42,11 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export class UserVoiceSearch {
   /**
    * @param {object}   config
-   * @param {string}   config.subdomain        Your UserVoice subdomain (e.g. "mycompany")
+   * @param {string}   config.subdomain        Your UserVoice subdomain (e.g. "mycompany").
+   *                                           Ignored when `baseUrl` is provided.
+   * @param {string}   [config.baseUrl]        Full base URL for instances hosted on a custom
+   *                                           domain, e.g. "https://ideas.mycompany.com".
+   *                                           Takes precedence over `subdomain`.
    * @param {string}   config.token            OAuth bearer token
    *
    * @param {string}   [config.logLevel]       Log verbosity. One of:
@@ -72,6 +76,7 @@ export class UserVoiceSearch {
    */
   constructor({
     subdomain,
+    baseUrl,
     token,
     logLevel,
     debug = false,
@@ -80,8 +85,8 @@ export class UserVoiceSearch {
     strategies = {},
     accounts: accountOpts = {},
   } = {}) {
-    if (!subdomain || typeof subdomain !== 'string') {
-      throw new UserVoiceConfigError('`subdomain` is required and must be a non-empty string.');
+    if (!baseUrl && (!subdomain || typeof subdomain !== 'string')) {
+      throw new UserVoiceConfigError('`subdomain` is required and must be a non-empty string (or provide `baseUrl`).');
     }
     if (!token || typeof token !== 'string') {
       throw new UserVoiceConfigError('`token` is required and must be a non-empty string.');
@@ -91,13 +96,13 @@ export class UserVoiceSearch {
     const effectiveLevel = logLevel ?? (debug ? 'debug' : 'silent');
     const loggerOpts = logBodyLimit != null ? { bodyLimit: logBodyLimit } : {};
     this._logger = createLogger(effectiveLevel, loggerOpts);
-    this._client = new Client({ subdomain, token, logger: this._logger, timeoutMs });
+    this._client = new Client({ subdomain, baseUrl, token, logger: this._logger, timeoutMs });
 
     this._emailStrategies = strategies.email ?? EMAIL_STRATEGIES;
     this._nameStrategies  = strategies.name  ?? NAME_STRATEGIES;
     this._accountConcurrency = accountOpts.concurrency ?? 5;
 
-    this._logger.info(`Initialized for subdomain "${subdomain}"`);
+    this._logger.info(`Initialized for ${baseUrl ?? `subdomain "${subdomain}"` }`);
   }
 
   // ─── User search ───────────────────────────────────────────────────────────

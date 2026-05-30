@@ -95,7 +95,8 @@ const { UserVoiceSearch } = require('uservoice-user-search');
 
 | Option | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `subdomain` | `string` | ✅ | — | Your UserVoice subdomain (e.g. `"mycompany"`) |
+| `subdomain` | `string` | ✅ * | — | Your UserVoice subdomain (e.g. `"mycompany"` → `mycompany.uservoice.com`). Not required when `baseUrl` is provided. |
+| `baseUrl` | `string` | ✅ * | — | Full base URL for instances on a custom domain (e.g. `"https://ideas.mycompany.com"`). Takes precedence over `subdomain`. |
 | `token` | `string` | ✅ | — | OAuth bearer token |
 | `logLevel` | `string` | | `'silent'` | Log verbosity level (see table below). Takes precedence over `debug`. |
 | `debug` | `boolean` | | `false` | Backward-compat alias for `logLevel: 'debug'`. Ignored when `logLevel` is set. |
