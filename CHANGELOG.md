@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] – 2026-05-30
+
+### Added
+
+- `getSuggestionSupporters(suggestionId, [opts])` — fetches all supporters for a suggestion with auto-pagination; returns `NormalizedSupporter[]` with lightweight account stubs
+- `getAccountDetails(accountId)` — fetches a single account record including all Salesforce-synced and UserVoice-native custom fields
+- `getSuggestionSupporterDetails(suggestionId, [opts])` — full pipeline: auto-paginated supporters → concurrency-limited parallel account fetches → merged result with `account.customFields` populated; designed for building supporter tables
+- `NormalizedSupporter` shape — hoists user fields alongside supporter metadata (`votes`, `supportedAt`) and a nested `NormalizedAccount`
+- `NormalizedAccount` shape — includes `id`, `name`, `externalId` (Salesforce ID), `memberCount`, `customFields` (flat key/value map), and `_raw`
+- `normalizeCustomFields()` — handles both plain-hash and array-of-`{name,value}` custom field shapes returned by different UserVoice versions
+- `mergeAccountsIntoSupporters()` — replaces account stubs with full account records after batch fetch
+- `accounts.concurrency` constructor option — cap parallel account requests (default `5`)
+- `concurrency` option on `getSuggestionSupporterDetails()` — per-call override of the concurrency cap
+- Partial-failure tolerance in batch account fetching — a single account's 403/404 logs a warning but does not abort the call; the supporter's stub is preserved
+- Tests for `fetchSuggestionSupporters`, `fetchAccount`, `fetchAccounts`, `mergeAccountsIntoSupporters`, and the full `getSuggestionSupporterDetails` pipeline
+
 ## [1.0.0] – 2026-05-21
 
 ### Added
