@@ -35,7 +35,7 @@ function supporterPage(supporters, page, perPage, total) {
 // ─── fetchSuggestionSupporters ────────────────────────────────────────────────
 
 describe('fetchSuggestionSupporters', () => {
-  it('fetches a single page of supporters', async () => {
+  it('fetches a single page of supporters via the flat filter endpoint', async () => {
     const raw = [rawSupporter(1), rawSupporter(2)];
     const client = { get: vi.fn().mockResolvedValue(supporterPage(raw, 1, 100, 2)) };
 
@@ -43,7 +43,8 @@ describe('fetchSuggestionSupporters', () => {
 
     expect(result).toHaveLength(2);
     expect(client.get).toHaveBeenCalledOnce();
-    expect(client.get).toHaveBeenCalledWith('/api/v2/admin/suggestions/42/supporters', {
+    expect(client.get).toHaveBeenCalledWith('/api/v2/admin/supporters', {
+      'filter[suggestion_id]': 42,
       page: 1,
       per_page: 100,
     });
@@ -135,24 +136,27 @@ describe('fetchSuggestionSupporters', () => {
     await expect(fetchSuggestionSupporters(client, 1, silentLogger)).rejects.toThrow('network fail');
   });
 
-  // ─── forumId / URL scoping ────────────────────────────────────────────────
+  // ─── Strategy ordering ────────────────────────────────────────────────────
 
-  it('uses the scoped URL when forumId is provided', async () => {
+  it('tries the flat filter endpoint first (Strategy 1)', async () => {
     const raw = [rawSupporter(1)];
     const client = { get: vi.fn().mockResolvedValue(supporterPage(raw, 1, 100, 1)) };
 
-    await fetchSuggestionSupporters(client, 42, silentLogger, { forumId: 7 });
+    await fetchSuggestionSupporters(client, 42, silentLogger);
 
-    expect(client.get).toHaveBeenCalledWith(
-      '/api/v2/admin/forums/7/suggestions/42/supporters',
-      expect.any(Object),
-    );
+    expect(client.get).toHaveBeenCalledOnce();
+    expect(client.get).toHaveBeenCalledWith('/api/v2/admin/supporters', {
+      'filter[suggestion_id]': 42,
+      page: 1,
+      per_page: 100,
+    });
   });
 
-  it('falls back to the unscoped URL when the scoped URL returns 404', async () => {
+  it('includes the forum-scoped path (Strategy 2) when forumId is provided', async () => {
     const { UserVoiceApiError } = await import('../src/errors.js');
     const raw = [rawSupporter(1)];
 
+    // Strategy 1 (flat filter) returns 404 → Strategy 2 (forum-scoped) succeeds
     const client = {
       get: vi.fn()
         .mockRejectedValueOnce(Object.assign(new UserVoiceApiError('not found', { status: 404 }), {}))
@@ -162,7 +166,50 @@ describe('fetchSuggestionSupporters', () => {
     const result = await fetchSuggestionSupporters(client, 42, silentLogger, { forumId: 7 });
 
     expect(result).toHaveLength(1);
-    // Second call must be the unscoped path
+    expect(client.get).toHaveBeenNthCalledWith(
+      2,
+      '/api/v2/admin/forums/7/suggestions/42/supporters',
+      expect.any(Object),
+    );
+  });
+
+  it('falls back to the unscoped URL (Strategy 3) when forumId strategies both 404', async () => {
+    const { UserVoiceApiError } = await import('../src/errors.js');
+    const raw = [rawSupporter(1)];
+    const err404 = Object.assign(new UserVoiceApiError('not found', { status: 404 }), {});
+
+    // Strategy 1 (flat filter) 404 → Strategy 2 (forum-scoped) 404 → Strategy 3 (unscoped) succeeds
+    const client = {
+      get: vi.fn()
+        .mockRejectedValueOnce(err404)
+        .mockRejectedValueOnce(err404)
+        .mockResolvedValueOnce(supporterPage(raw, 1, 100, 1)),
+    };
+
+    const result = await fetchSuggestionSupporters(client, 42, silentLogger, { forumId: 7 });
+
+    expect(result).toHaveLength(1);
+    expect(client.get).toHaveBeenNthCalledWith(
+      3,
+      '/api/v2/admin/suggestions/42/supporters',
+      expect.any(Object),
+    );
+  });
+
+  it('falls back to unscoped URL (Strategy 2) when flat filter 404s and no forumId', async () => {
+    const { UserVoiceApiError } = await import('../src/errors.js');
+    const raw = [rawSupporter(1)];
+
+    // Strategy 1 (flat filter) 404 → Strategy 2 (unscoped, no forumId) succeeds
+    const client = {
+      get: vi.fn()
+        .mockRejectedValueOnce(Object.assign(new UserVoiceApiError('not found', { status: 404 }), {}))
+        .mockResolvedValueOnce(supporterPage(raw, 1, 100, 1)),
+    };
+
+    const result = await fetchSuggestionSupporters(client, 42, silentLogger);
+
+    expect(result).toHaveLength(1);
     expect(client.get).toHaveBeenNthCalledWith(
       2,
       '/api/v2/admin/suggestions/42/supporters',
@@ -170,25 +217,17 @@ describe('fetchSuggestionSupporters', () => {
     );
   });
 
-  it('uses the unscoped URL directly when forumId is omitted', async () => {
-    const raw = [rawSupporter(1)];
-    const client = { get: vi.fn().mockResolvedValue(supporterPage(raw, 1, 100, 1)) };
-
-    await fetchSuggestionSupporters(client, 42, silentLogger);
-
-    expect(client.get).toHaveBeenCalledWith(
-      '/api/v2/admin/suggestions/42/supporters',
-      expect.any(Object),
-    );
-    expect(client.get).toHaveBeenCalledTimes(1);
-  });
-
-  it('rethrows 404 when no fallback path is available (no forumId)', async () => {
+  it('returns [] when all strategies return 404', async () => {
     const { UserVoiceApiError } = await import('../src/errors.js');
     const err = Object.assign(new UserVoiceApiError('not found', { status: 404 }), {});
 
+    // Both flat filter and unscoped return 404
     const client = { get: vi.fn().mockRejectedValue(err) };
 
-    await expect(fetchSuggestionSupporters(client, 42, silentLogger)).rejects.toThrow('not found');
+    const result = await fetchSuggestionSupporters(client, 42, silentLogger);
+
+    expect(result).toEqual([]);
+    // Two strategies tried (flat filter + unscoped), both failed
+    expect(client.get).toHaveBeenCalledTimes(2);
   });
 });
