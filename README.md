@@ -14,6 +14,7 @@ UserVoice exposes several different endpoints for finding users, and each one be
 
 - **Single stable interface** — `findByEmail()`, `findByName()`, `find()`
 - **Multi-strategy fallback** — four email strategies, three name strategies, tried in reliability order
+- **Single-call suggestion metrics** — `getSuggestion()` fetches a suggestion with all Salesforce-synced aggregated data (`cv_enterprise`, `cv_majors`, MRR, open opportunity values, etc.) in one API call — no supporter pagination needed
 - **Suggestion supporter pipeline** — `getSuggestionSupporterDetails()` fetches all supporters for an idea and enriches each one with the full account record (including all Salesforce-synced custom fields)
 - **Normalised response** — consistent `NormalizedUser`, `NormalizedSupporter`, and `NormalizedAccount` shapes regardless of which API responded
 - **Auto-pagination** — supporter fetching walks all pages automatically
@@ -66,8 +67,12 @@ console.log(`${users.length} match(es) found.`);
 const results = await search.find('alice@example.com');
 const results2 = await search.find('Alice Smith');
 
+// Fetch suggestion with all Salesforce-synced aggregate data (single API call)
+const s = await search.getSuggestion(suggestionId);
+console.log(s.title, s.supporterMrr, s.cvEnterprise.revenue);
+
 // Suggestion supporters — with full account + custom fields
-// Pass forumId (project ID) to avoid 404 on most UserVoice instances
+// (Only on standard UserVoice instances — see notes on enterprise deployments)
 const rows = await search.getSuggestionSupporterDetails(suggestionId, { forumId: 1 });
 for (const row of rows) {
   console.log(
@@ -183,6 +188,29 @@ console.log(account.customFields);
 
 ---
 
+### `search.getSuggestion(suggestionId)`
+
+Fetch a single suggestion with all pre-computed aggregated data in **one API call**.
+
+This is the recommended method for syncing suggestion metrics from UserVoice to an external system. It returns everything UserVoice has already computed: supporter counts, MRR, Salesforce-synced segment data, and open opportunity values. The forum ID is extracted automatically from the JSON API sideloaded `links` and is available as `suggestion.forumId`.
+
+> **Enterprise instances** (e.g. `ideas.ringcentral.com`): On these deployments, individual supporter enumeration via the API is not possible. `getSuggestion()` provides a reliable single-call alternative.
+
+```js
+const s = await search.getSuggestion(51128290);
+
+console.log(s.title);                     // "Dark mode support"
+console.log(s.forumId);                   // 958493 — use this as forumId for supporter calls
+console.log(s.supportersCount);           // 142
+console.log(s.supporterMrr);             // 84250 (MRR of supporting accounts)
+console.log(s.cvEnterprise.revenue);      // 250000 (Enterprise ARR)
+console.log(s.cvPotentialRevenue);        // 310000 (open opportunity value)
+```
+
+Returns a `NormalizedSuggestion` — see the Normalised Object Shapes section below.
+
+---
+
 ### `search.getSuggestionSupporterDetails(suggestionId, [options])`
 
 **The primary method for building a supporter table with account data.**
@@ -250,6 +278,46 @@ for (const row of rows) {
 ```
 
 Custom fields arrive from the API as either a plain hash (`{ ARR: 50000 }`) or an array of `{ name, value }` pairs — both are normalised to a flat `{ key: value }` map.
+
+### `NormalizedSuggestion`
+
+```ts
+{
+  id:      number | string
+  title:   string | null
+  status:  string | null
+  forumId: number | string | null   // extracted from JSON API links
+
+  createdAt: string | null          // ISO-8601
+  updatedAt: string | null          // ISO-8601
+
+  // Supporter aggregates (pre-computed by UserVoice)
+  supportersCount:         number | null
+  supportingAccountsCount: number | null
+  supporterMrr:            number | null
+  supporterRevenue:        number | null
+  firstSupportAt:          string | null   // ISO-8601
+  lastSupportAt:           string | null   // ISO-8601
+
+  // Salesforce-synced segment breakdowns
+  cvEnterprise: { accountsCount: number|null, revenue: number|null, usersCount: number|null }
+  cvMajors:     { accountsCount: number|null, revenue: number|null, usersCount: number|null }
+  cvMidmarket:  { accountsCount: number|null, revenue: number|null, usersCount: number|null }
+  cvSm:         { accountsCount: number|null, revenue: number|null, usersCount: number|null }
+
+  // Opportunity metrics
+  cvOpenOpportunities:         number | null
+  cvOpenOpportunitiesBlockers: number | null
+  cvPotentialRevenue:          number | null
+  cvPotentialRevenueBlockers:  number | null
+  cvLostOpportunities:         number | null
+  cvLostRevenue:               number | null
+  cvPercentOpportunitiesWon:   number | null
+  cvPercentRevenueWon:         number | null
+
+  _raw: object
+}
+```
 
 ### `NormalizedSupporter`
 

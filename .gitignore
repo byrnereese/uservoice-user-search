@@ -7,6 +7,10 @@ coverage/
 .env.*
 !.env.example
 
+# Local context files not for version control
+GOOGLE_AI_STUDIO_CONTEXT.md
+debug-live.mjs
+
 # Logs
 logs
 *.log

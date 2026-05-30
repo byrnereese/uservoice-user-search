@@ -31,6 +31,7 @@ import { EMAIL_STRATEGIES } from './strategies/email.js';
 import { NAME_STRATEGIES } from './strategies/name.js';
 import { fetchSuggestionSupporters } from './supporters.js';
 import { fetchAccount, fetchAccounts, mergeAccountsIntoSupporters } from './accounts.js';
+import { fetchSuggestion } from './suggestions.js';
 import { UserVoiceApiError, UserVoiceRateLimitError, UserVoiceConfigError } from './errors.js';
 
 // Re-export so callers can reference level names without a second import
@@ -342,6 +343,53 @@ export class UserVoiceSearch {
       `${accountMap.size}/${accountIds.length} accounts enriched in ${Date.now() - t0}ms`,
     );
     return enriched;
+  }
+
+  // ─── Suggestion ───────────────────────────────────────────────────────────
+
+  /**
+   * Fetch a single suggestion with all pre-computed aggregated data.
+   *
+   * This is the recommended method for syncing suggestion metrics from
+   * UserVoice to an external system (e.g. a product database or data warehouse).
+   * It makes **one** API call and returns everything UserVoice has already
+   * computed: supporter counts, MRR, Salesforce-synced segment data, open
+   * opportunity values, and more.
+   *
+   * On enterprise UserVoice instances like `ideas.ringcentral.com`, individual
+   * supporter enumeration is not possible through the API — this method
+   * provides a reliable single-call alternative.
+   *
+   * The forum ID is extracted automatically from the JSON API sideloaded
+   * `links` object and is available as `suggestion.forumId`.
+   *
+   * @param {number|string} suggestionId
+   * @returns {Promise<import('./normalizer.js').NormalizedSuggestion>}
+   *
+   * @example
+   * const s = await search.getSuggestion(51128290);
+   *
+   * console.log(s.title);
+   * console.log(s.supportersCount);          // total voters
+   * console.log(s.supporterMrr);             // MRR of supporting accounts
+   * console.log(s.cvEnterprise.revenue);     // Enterprise segment revenue
+   * console.log(s.cvPotentialRevenue);       // total open opportunity value
+   * console.log(s.forumId);                  // forum the suggestion belongs to
+   */
+  async getSuggestion(suggestionId) {
+    if (!suggestionId) {
+      throw new TypeError('`suggestionId` is required.');
+    }
+    const t0 = Date.now();
+    this._logger.info(`getSuggestion: #${suggestionId}`);
+
+    const suggestion = await fetchSuggestion(this._client, suggestionId, this._logger);
+
+    this._logger.info(
+      `getSuggestion → "${suggestion.title}" ` +
+      `(${suggestion.supportersCount} supporter(s)) in ${Date.now() - t0}ms`,
+    );
+    return suggestion;
   }
 
   // ─── Private helpers ───────────────────────────────────────────────────────

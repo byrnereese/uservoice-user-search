@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] – 2026-05-30
+
+### Added
+
+- **`getSuggestion(id)`** — fetches a single suggestion with all pre-computed aggregated data in one API call. Returns a `NormalizedSuggestion` shape that surfaces:
+  - Supporter aggregates: `supportersCount`, `supportingAccountsCount`, `supporterMrr`, `supporterRevenue`, `firstSupportAt`, `lastSupportAt`
+  - Salesforce-synced segment data: `cvEnterprise`, `cvMajors`, `cvMidmarket`, `cvSm` (each with `accountsCount`, `revenue`, `usersCount`)
+  - Opportunity metrics: `cvOpenOpportunities`, `cvPotentialRevenue`, `cvLostRevenue`, `cvPercentOpportunitiesWon`, and related fields
+  - `forumId` — extracted automatically from the JSON API `links` sideload (not from a nested field)
+- **`normalizeSuggestion(raw, links)`** — internal normalizer for suggestion objects
+- **`src/suggestions.js`** — `fetchSuggestion(client, suggestionId, logger)` calls `GET /api/v2/admin/suggestions/:id?includes=forums`
+
+### Notes
+
+On enterprise UserVoice instances like `ideas.ringcentral.com`, the supporters collection endpoint silently ignores all filter parameters and nested suggestion paths return 404. `getSuggestion()` is the recommended replacement — it retrieves the same Salesforce-synced revenue and account data in a single fast call, avoiding thousands of paginated supporter requests.
+
+## [1.1.6] – 2026-05-30
+
+### Fixed
+
+- **Supporters always returning 0 on enterprise instances** — The library was only trying nested URL paths (`/suggestions/:id/supporters`) which do not exist on enterprise/hosted UserVoice deployments like `ideas.ringcentral.com`. The correct endpoint on these instances is a flat top-level collection: `GET /api/v2/admin/supporters?filter[suggestion_id]=:id`. Strategy 1 (flat filter) is now tried first; strategies 2 (forum-scoped path) and 3 (unscoped path) are retained as fallbacks for standard instances.
+
 ## [1.1.5] – 2026-05-30
 
 ### Changed

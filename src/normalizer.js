@@ -202,6 +202,111 @@ export function normalizeSupporters(rawList) {
     .map(normalizeSupporter);
 }
 
+// ─── Suggestion ──────────────────────────────────────────────────────────────
+
+/**
+ * @typedef {object} CvSegment
+ * @property {number|null} accountsCount
+ * @property {number|null} revenue
+ * @property {number|null} usersCount
+ */
+
+/**
+ * @typedef {object} NormalizedSuggestion
+ * @property {number|string}  id
+ * @property {string|null}    title
+ * @property {string|null}    status
+ * @property {number|string|null} forumId        Extracted from JSON API links
+ * @property {string|null}    createdAt          ISO-8601
+ * @property {string|null}    updatedAt          ISO-8601
+ *
+ * @property {number|null}    supportersCount
+ * @property {number|null}    supportingAccountsCount
+ * @property {number|null}    supporterMrr       Pre-computed MRR from supporting accounts
+ * @property {number|null}    supporterRevenue   Pre-computed total revenue
+ * @property {string|null}    firstSupportAt     ISO-8601 or null
+ * @property {string|null}    lastSupportAt      ISO-8601 or null
+ *
+ * @property {CvSegment}      cvEnterprise       Salesforce-synced Enterprise segment data
+ * @property {CvSegment}      cvMajors           Salesforce-synced Majors segment data
+ * @property {CvSegment}      cvMidmarket        Salesforce-synced Mid-market segment data
+ * @property {CvSegment}      cvSm               Salesforce-synced SMB segment data
+ *
+ * @property {number|null}    cvOpenOpportunities
+ * @property {number|null}    cvOpenOpportunitiesBlockers
+ * @property {number|null}    cvPotentialRevenue
+ * @property {number|null}    cvPotentialRevenueBlockers
+ * @property {number|null}    cvLostOpportunities
+ * @property {number|null}    cvLostRevenue
+ * @property {number|null}    cvPercentOpportunitiesWon
+ * @property {number|null}    cvPercentRevenueWon
+ *
+ * @property {unknown}        _raw               Original API suggestion object
+ */
+
+/**
+ * Normalise a single raw suggestion object as returned by
+ * `GET /api/v2/admin/suggestions/:id?includes=forums`.
+ *
+ * Extracts the rich pre-computed Salesforce-synced aggregate fields (`cv_*`)
+ * that UserVoice populates on each suggestion so callers don't need to
+ * individually fetch supporter/account records.
+ *
+ * @param {Record<string, unknown>} raw   Raw suggestion record
+ * @param {Record<string, unknown>} [links]  JSON API sideloaded links (from body.suggestions[0].links)
+ * @returns {NormalizedSuggestion}
+ */
+export function normalizeSuggestion(raw, links = {}) {
+  if (!raw || typeof raw !== 'object') {
+    throw new TypeError(`Cannot normalise non-object suggestion: ${JSON.stringify(raw)}`);
+  }
+
+  const cvSeg = (key) => {
+    const seg = raw[key];
+    if (!seg || typeof seg !== 'object') return { accountsCount: null, revenue: null, usersCount: null };
+    return {
+      accountsCount: seg.accounts_count ?? null,
+      revenue:       seg.revenue        ?? null,
+      usersCount:    seg.users_count    ?? null,
+    };
+  };
+
+  return {
+    id:      raw.id    ?? null,
+    title:   raw.title ?? null,
+    status:  raw.status ?? raw.state ?? null,
+    forumId: links?.forum ?? raw.forum_id ?? null,
+    createdAt: raw.created_at ?? null,
+    updatedAt: raw.updated_at ?? null,
+
+    // Supporter aggregates
+    supportersCount:        raw.supporters_count         ?? null,
+    supportingAccountsCount: raw.supporting_accounts_count ?? raw.account_supporters_count ?? null,
+    supporterMrr:           raw.supporter_mrr            ?? null,
+    supporterRevenue:       raw.supporter_revenue        ?? null,
+    firstSupportAt:         raw.first_support_at         ?? null,
+    lastSupportAt:          raw.last_support_at          ?? null,
+
+    // Salesforce-synced computed value segments
+    cvEnterprise: cvSeg('cv_enterprise'),
+    cvMajors:     cvSeg('cv_majors'),
+    cvMidmarket:  cvSeg('cv_midmarket'),
+    cvSm:         cvSeg('cv_sm'),
+
+    // Opportunity metrics
+    cvOpenOpportunities:         raw.cv_open_opportunities          ?? null,
+    cvOpenOpportunitiesBlockers: raw.cv_open_opportunities_blockers ?? null,
+    cvPotentialRevenue:          raw.cv_potential_revenue           ?? null,
+    cvPotentialRevenueBlockers:  raw.cv_potential_revenue_blockers  ?? null,
+    cvLostOpportunities:         raw.cv_lost_opportunities          ?? null,
+    cvLostRevenue:               raw.cv_lost_revenue                ?? null,
+    cvPercentOpportunitiesWon:   raw.cv_percent_opportunities_won   ?? null,
+    cvPercentRevenueWon:         raw.cv_percent_revenue_won         ?? null,
+
+    _raw: raw,
+  };
+}
+
 // ─── Private helpers ─────────────────────────────────────────────────────────
 
 function normalizeRoles(roles) {
