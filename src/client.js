@@ -5,7 +5,7 @@
  *  - Bearer auth header injection
  *  - JSON parsing with error normalisation
  *  - Automatic rate-limit retry (429 + Retry-After)
- *  - Debug request/response logging
+ *  - Tiered request/response logging (debug = metadata, verbose = full bodies)
  */
 
 import { UserVoiceApiError, UserVoiceRateLimitError } from './errors.js';
@@ -124,7 +124,9 @@ export class Client {
 
     // Count results for logging (best-effort)
     const resultCount = countResults(body);
-    this.logger.response(url, response.status, resultCount, durationMs);
+
+    // Pass the parsed body so verbose level can log it in full
+    this.logger.response(url, response.status, resultCount, durationMs, body);
 
     return body;
   }
@@ -137,14 +139,19 @@ function sleep(ms) {
 }
 
 /**
- * Try to determine how many user records are in the response body.
+ * Try to determine how many records are in the response body.
+ * Handles user, supporter, and account collection shapes.
  * Returns -1 if the shape is unrecognised.
  */
 function countResults(body) {
   if (!body || typeof body !== 'object') return -1;
   // v2 collection: { users: [...] }
   if (Array.isArray(body.users)) return body.users.length;
-  // v1 search: { response: [...] }  or  { users: [...] }
+  // v2 supporters: { supporters: [...] }
+  if (Array.isArray(body.supporters)) return body.supporters.length;
+  // v2 single account: { account: {...} } — count as 1
+  if (body.account && typeof body.account === 'object') return 1;
+  // v1 search: { response: [...] }
   if (Array.isArray(body.response)) return body.response.length;
   // autocomplete: { autocomplete: { users: [...] } }
   if (Array.isArray(body.autocomplete?.users)) return body.autocomplete.users.length;

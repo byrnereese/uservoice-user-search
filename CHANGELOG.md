@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] – 2026-05-30
+
+### Fixed
+
+- **HTTP 404 on supporter fetch — dist build updated** — The `dist/index.cjs` and `dist/index.mjs` built artefacts now include the `forumId` fix from 1.1.2. Previously the source had been patched but the compiled output had not been regenerated, so callers loading from `dist/` (the default for `require()` and `import`) were still hitting the 404.
+
+## [1.1.2] – 2026-05-30
+
+### Fixed
+
+- **HTTP 404 on supporter fetch** — Most UserVoice instances require a forum-scoped URL for the supporters endpoint (`/api/v2/admin/forums/:forumId/suggestions/:id/supporters`) but the library was only calling the unscoped path (`/api/v2/admin/suggestions/:id/supporters`). Added a `forumId` option to `getSuggestionSupporters()` and `getSuggestionSupporterDetails()`. When `forumId` is supplied the scoped URL is tried first; if it returns 404 the library automatically retries with the unscoped URL before giving up. Passing `forumId` is strongly recommended for all UserVoice instances.
+
+## [1.1.1] – 2026-05-30
+
+### Added
+
+- Six-tier `logLevel` option: `'silent'` | `'error'` | `'warn'` | `'info'` | `'debug'` | `'verbose'`
+  - `error` — hard API errors only
+  - `warn` — + non-fatal warnings (unexpected response shapes, partial account-fetch failures, 429 retries)
+  - `info` — + public-method entry/exit with result counts and per-call timing summaries
+  - `debug` — + strategy lifecycle events, request URLs, redacted headers, response status and timing (equivalent to the previous `debug: true`)
+  - `verbose` — + full decoded query-parameter listings and complete response bodies
+- `logBodyLimit` constructor option (default `4096`) — caps the characters printed per response body at `verbose` level; bodies longer than the limit are truncated with a notice showing the actual full length
+- `LOG_LEVELS` constant exported from the package root for programmatic level references
+- Per-call timing in all `info`-level summary messages (e.g. `findByEmail → user #42 "Alice" in 213ms`)
+- `countResults()` in the HTTP client now recognises supporter and single-account response shapes for accurate result counts in debug logs
+
+### Changed
+
+- `logLevel` takes precedence over `debug` when both constructor options are provided
+- `debug: true` is now a backward-compatible alias for `logLevel: 'debug'` — no behaviour change for existing callers
+
 ## [1.1.0] – 2026-05-30
 
 ### Added

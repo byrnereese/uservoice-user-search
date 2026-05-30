@@ -20,7 +20,7 @@
  * const any   = await search.find('alice@example.com');
  *
  * // Suggestion supporters with full account / custom-field data
- * const rows = await search.getSuggestionSupporterDetails(suggestionId);
+ * const rows = await search.getSuggestionSupporterDetails(suggestionId, { forumId: 1 });
  * // rows[0].account.customFields → { ARR: 50000, Plan: 'Enterprise', ... }
  * ```
  */
@@ -33,6 +33,9 @@ import { fetchSuggestionSupporters } from './supporters.js';
 import { fetchAccount, fetchAccounts, mergeAccountsIntoSupporters } from './accounts.js';
 import { UserVoiceApiError, UserVoiceRateLimitError, UserVoiceConfigError } from './errors.js';
 
+// Re-export so callers can reference level names without a second import
+export { LOG_LEVELS } from './logger.js';
+
 // Simple RFC-5322-ish email detection — good enough for routing decisions.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -41,7 +44,25 @@ export class UserVoiceSearch {
    * @param {object}   config
    * @param {string}   config.subdomain        Your UserVoice subdomain (e.g. "mycompany")
    * @param {string}   config.token            OAuth bearer token
-   * @param {boolean}  [config.debug]          Enable verbose console logging (default: false)
+   *
+   * @param {string}   [config.logLevel]       Log verbosity. One of:
+   *                                             'silent'  — no output (default)
+   *                                             'error'   — hard errors only
+   *                                             'warn'    — errors + non-fatal warnings
+   *                                             'info'    — progress, totals, timing
+   *                                             'debug'   — strategy events, request URLs,
+   *                                                         redacted headers, response metadata
+   *                                             'verbose' — everything in debug, plus full
+   *                                                         decoded query params and full
+   *                                                         response bodies
+   *                                           Takes precedence over `debug` when both are set.
+   * @param {boolean}  [config.debug]          Backward-compatible alias for logLevel:'debug'.
+   *                                           Ignored when `logLevel` is also specified.
+   * @param {number}   [config.logBodyLimit=4096]
+   *                                           Maximum characters printed per response body
+   *                                           at verbose level. Bodies longer than this are
+   *                                           truncated with a notice.
+   *
    * @param {number}   [config.timeoutMs]      HTTP request timeout in ms (default: 15 000)
    * @param {object}   [config.strategies]     Override which search strategies to use
    * @param {Array}    [config.strategies.email]  Custom email strategy list
@@ -52,7 +73,9 @@ export class UserVoiceSearch {
   constructor({
     subdomain,
     token,
+    logLevel,
     debug = false,
+    logBodyLimit,
     timeoutMs,
     strategies = {},
     accounts: accountOpts = {},
@@ -64,7 +87,10 @@ export class UserVoiceSearch {
       throw new UserVoiceConfigError('`token` is required and must be a non-empty string.');
     }
 
-    this._logger = createLogger(!!debug);
+    // logLevel takes precedence; fall back to debug boolean for backward compat
+    const effectiveLevel = logLevel ?? (debug ? 'debug' : 'silent');
+    const loggerOpts = logBodyLimit != null ? { bodyLimit: logBodyLimit } : {};
+    this._logger = createLogger(effectiveLevel, loggerOpts);
     this._client = new Client({ subdomain, token, logger: this._logger, timeoutMs });
 
     this._emailStrategies = strategies.email ?? EMAIL_STRATEGIES;
@@ -90,12 +116,15 @@ export class UserVoiceSearch {
       throw new TypeError('`email` must be a non-empty string.');
     }
     const trimmed = email.trim().toLowerCase();
+    const t0 = Date.now();
     this._logger.info(`findByEmail("${trimmed}")`);
 
     const results = await this._runStrategies(this._emailStrategies, trimmed);
     const user = results[0] ?? null;
     this._logger.info(
-      user ? `findByEmail resolved → user #${user.id} (${user.name})` : 'findByEmail resolved → null',
+      user
+        ? `findByEmail → user #${user.id} "${user.name}" in ${Date.now() - t0}ms`
+        : `findByEmail → no match in ${Date.now() - t0}ms`,
     );
     return user;
   }
@@ -117,13 +146,14 @@ export class UserVoiceSearch {
       throw new TypeError('`name` must be a non-empty string.');
     }
     const trimmed = name.trim();
+    const t0 = Date.now();
     this._logger.info(`findByName("${trimmed}", all=${all})`);
 
     const results = all
       ? await this._runAllStrategies(this._nameStrategies, trimmed)
       : await this._runStrategies(this._nameStrategies, trimmed);
 
-    this._logger.info(`findByName resolved → ${results.length} result(s)`);
+    this._logger.info(`findByName → ${results.length} result(s) in ${Date.now() - t0}ms`);
     return results;
   }
 
@@ -162,6 +192,12 @@ export class UserVoiceSearch {
    *
    * @param {number|string} suggestionId
    * @param {object}        [opts]
+   * @param {number|string} [opts.forumId]     The UserVoice forum (project) ID the suggestion
+   *                                           belongs to. When supplied the scoped path
+   *                                           `/api/v2/admin/forums/:forumId/suggestions/…`
+   *                                           is used, with automatic fallback to the unscoped
+   *                                           path on 404. Strongly recommended — most UserVoice
+   *                                           instances return 404 without it.
    * @param {number}        [opts.perPage=100]  Records per API page (max 100)
    * @param {number|null}   [opts.limit=null]   Total supporter cap (null = all)
    * @returns {Promise<import('./normalizer.js').NormalizedSupporter[]>}
@@ -170,6 +206,7 @@ export class UserVoiceSearch {
     if (!suggestionId) {
       throw new TypeError('`suggestionId` is required.');
     }
+    const t0 = Date.now();
     this._logger.info(`getSuggestionSupporters: suggestion #${suggestionId}`);
 
     const supporters = await fetchSuggestionSupporters(
@@ -179,7 +216,9 @@ export class UserVoiceSearch {
       opts,
     );
 
-    this._logger.info(`getSuggestionSupporters: ${supporters.length} supporter(s)`);
+    this._logger.info(
+      `getSuggestionSupporters → ${supporters.length} supporter(s) in ${Date.now() - t0}ms`,
+    );
     return supporters;
   }
 
@@ -196,8 +235,13 @@ export class UserVoiceSearch {
     if (!accountId) {
       throw new TypeError('`accountId` is required.');
     }
+    const t0 = Date.now();
     this._logger.info(`getAccountDetails: account #${accountId}`);
-    return fetchAccount(this._client, accountId, this._logger);
+    const account = await fetchAccount(this._client, accountId, this._logger);
+    this._logger.info(
+      `getAccountDetails → "${account.name}" (${Object.keys(account.customFields).length} custom field(s)) in ${Date.now() - t0}ms`,
+    );
+    return account;
   }
 
   /**
@@ -215,14 +259,19 @@ export class UserVoiceSearch {
    *
    * @param {number|string} suggestionId
    * @param {object}        [opts]
-   * @param {number}        [opts.perPage=100]      Supporter records per API page
-   * @param {number|null}   [opts.limit=null]       Cap total supporters (null = all)
-   * @param {number}        [opts.concurrency]      Max parallel account requests
-   *                                                (overrides constructor default)
+   * @param {number|string} [opts.forumId]           The UserVoice forum (project) ID the suggestion
+   *                                                 belongs to. Strongly recommended — most UserVoice
+   *                                                 instances return 404 without it. When supplied the
+   *                                                 scoped path is tried first, with automatic fallback
+   *                                                 to the unscoped path on 404.
+   * @param {number}        [opts.perPage=100]       Supporter records per API page
+   * @param {number|null}   [opts.limit=null]        Cap total supporters (null = all)
+   * @param {number}        [opts.concurrency]       Max parallel account requests
+   *                                                 (overrides constructor default)
    * @returns {Promise<import('./normalizer.js').NormalizedSupporter[]>}
    *
    * @example
-   * const rows = await search.getSuggestionSupporterDetails(12345);
+   * const rows = await search.getSuggestionSupporterDetails(12345, { forumId: 1 });
    *
    * // Render a table
    * for (const row of rows) {
@@ -243,6 +292,7 @@ export class UserVoiceSearch {
 
     const { concurrency = this._accountConcurrency, ...supporterOpts } = opts;
 
+    const t0 = Date.now();
     this._logger.info(`getSuggestionSupporterDetails: suggestion #${suggestionId}`);
 
     // Step 1 — all supporters (auto-paginated)
@@ -254,7 +304,9 @@ export class UserVoiceSearch {
     );
 
     if (supporters.length === 0) {
-      this._logger.info('getSuggestionSupporterDetails: no supporters, done');
+      this._logger.info(
+        `getSuggestionSupporterDetails → 0 supporters in ${Date.now() - t0}ms`,
+      );
       return [];
     }
 
@@ -269,7 +321,8 @@ export class UserVoiceSearch {
     ];
 
     this._logger.info(
-      `getSuggestionSupporterDetails: ${supporters.length} supporter(s), ${accountIds.length} unique account(s)`,
+      `getSuggestionSupporterDetails: ${supporters.length} supporter(s), ` +
+      `${accountIds.length} unique account(s) to enrich`,
     );
 
     // Step 3 — parallel account fetch (concurrency-limited, partial-failure tolerant)
@@ -278,8 +331,10 @@ export class UserVoiceSearch {
     // Step 4 — merge full account data onto each supporter
     const enriched = mergeAccountsIntoSupporters(supporters, accountMap);
 
+    const enrichedCount = enriched.filter((s) => s.account?.customFields).length;
     this._logger.info(
-      `getSuggestionSupporterDetails: done — ${enriched.length} row(s) ready`,
+      `getSuggestionSupporterDetails → ${enriched.length} row(s), ` +
+      `${accountMap.size}/${accountIds.length} accounts enriched in ${Date.now() - t0}ms`,
     );
     return enriched;
   }

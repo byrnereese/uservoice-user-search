@@ -18,7 +18,7 @@ UserVoice exposes several different endpoints for finding users, and each one be
 - **Normalised response** — consistent `NormalizedUser`, `NormalizedSupporter`, and `NormalizedAccount` shapes regardless of which API responded
 - **Auto-pagination** — supporter fetching walks all pages automatically
 - **Concurrency-limited account fetching** — batch account lookups run in parallel without hammering the API
-- **Debug mode** — verbose per-strategy logging with Bearer token redaction
+- **Six-tier log levels** — `silent` → `error` → `warn` → `info` → `debug` → `verbose`; verbose adds full decoded query params and complete response bodies with configurable truncation
 - **Rate-limit handling** — automatic back-off and retry on `429` responses
 - **Zero runtime dependencies** — uses the native `fetch` API (Node ≥ 18)
 - **Dual ESM + CJS build** — works in modern ESM projects and legacy `require()` contexts
@@ -67,7 +67,8 @@ const results = await search.find('alice@example.com');
 const results2 = await search.find('Alice Smith');
 
 // Suggestion supporters — with full account + custom fields
-const rows = await search.getSuggestionSupporterDetails(suggestionId);
+// Pass forumId (project ID) to avoid 404 on most UserVoice instances
+const rows = await search.getSuggestionSupporterDetails(suggestionId, { forumId: 1 });
 for (const row of rows) {
   console.log(
     row.name,
@@ -96,7 +97,9 @@ const { UserVoiceSearch } = require('uservoice-user-search');
 |---|---|---|---|---|
 | `subdomain` | `string` | ✅ | — | Your UserVoice subdomain (e.g. `"mycompany"`) |
 | `token` | `string` | ✅ | — | OAuth bearer token |
-| `debug` | `boolean` | | `false` | Enable verbose console logging |
+| `logLevel` | `string` | | `'silent'` | Log verbosity level (see table below). Takes precedence over `debug`. |
+| `debug` | `boolean` | | `false` | Backward-compat alias for `logLevel: 'debug'`. Ignored when `logLevel` is set. |
+| `logBodyLimit` | `number` | | `4096` | Max characters per response body printed at `verbose` level. Longer bodies are truncated. |
 | `timeoutMs` | `number` | | `15000` | Per-request timeout in milliseconds |
 | `strategies.email` | `Strategy[]` | | built-in | Override the email strategy list |
 | `strategies.name` | `Strategy[]` | | built-in | Override the name strategy list |
@@ -153,12 +156,13 @@ const results2 = await search.find('Alice Smith');        // → NormalizedUser[
 Fetch all supporters for a suggestion. Returns normalised supporter records with a **lightweight account stub** (id + name only). Custom fields on the account are not included — use `getSuggestionSupporterDetails()` for that.
 
 ```js
-const supporters = await search.getSuggestionSupporters(12345);
+const supporters = await search.getSuggestionSupporters(12345, { forumId: 1 });
 // → NormalizedSupporter[]
 ```
 
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `forumId` | `number\|string` | — | The UserVoice forum (project) ID the suggestion belongs to. **Strongly recommended** — most UserVoice instances return 404 without it. Automatically falls back to the unscoped URL on 404. |
 | `perPage` | `number` | `100` | Records per API page (max 100) |
 | `limit` | `number\|null` | `null` | Cap total supporters returned. `null` = fetch all pages. |
 
@@ -185,7 +189,7 @@ console.log(account.customFields);
 Fetches all supporters for a suggestion (auto-paginated) and enriches each one with the full account record — including all Salesforce-synced custom fields. Accounts are fetched in parallel with a configurable concurrency limit.
 
 ```js
-const rows = await search.getSuggestionSupporterDetails(12345);
+const rows = await search.getSuggestionSupporterDetails(12345, { forumId: 1 });
 // → NormalizedSupporter[]  (each row has a full account.customFields map)
 
 // Render a table
@@ -204,6 +208,7 @@ for (const row of rows) {
 
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `forumId` | `number\|string` | — | The UserVoice forum (project) ID the suggestion belongs to. **Strongly recommended** — most UserVoice instances return 404 without it. Automatically falls back to the unscoped URL on 404. |
 | `perPage` | `number` | `100` | Supporter records per API page |
 | `limit` | `number\|null` | `null` | Cap total supporters (null = all) |
 | `concurrency` | `number` | `5` | Max parallel account requests (overrides constructor default) |
@@ -299,11 +304,43 @@ try {
 
 ---
 
-## Debug Mode
+## Log Levels
 
-Enable `debug: true` to get detailed logs for every API call, strategy decision, and pagination step:
+The module uses a six-tier log system controlled by the `logLevel` constructor option.
+
+| Level | Value | What it prints |
+|---|---|---|
+| `silent` | 0 | Nothing (default) |
+| `error` | 1 | Hard API errors, config problems |
+| `warn` | 2 | + Non-fatal warnings (unexpected response shapes, partial failures, 429 retry notices) |
+| `info` | 3 | + Public method entry/exit with result counts and per-call timing |
+| `debug` | 4 | + Strategy events, request URLs, redacted headers, response status and timing |
+| `verbose` | 5 | + Full decoded query-param listings and complete response bodies (truncated at `logBodyLimit`) |
 
 ```js
+// info — timing summaries and result counts only
+const search = new UserVoiceSearch({
+  subdomain: 'mycompany',
+  token: process.env.UV_TOKEN,
+  logLevel: 'info',
+});
+
+// debug — full request/response metadata (no bodies)
+const search = new UserVoiceSearch({
+  subdomain: 'mycompany',
+  token: process.env.UV_TOKEN,
+  logLevel: 'debug',
+});
+
+// verbose — everything, including full response bodies
+const search = new UserVoiceSearch({
+  subdomain: 'mycompany',
+  token: process.env.UV_TOKEN,
+  logLevel: 'verbose',
+  logBodyLimit: 8192,   // optional: default is 4096 chars
+});
+
+// backward compat — debug:true still works (maps to logLevel:'debug')
 const search = new UserVoiceSearch({
   subdomain: 'mycompany',
   token: process.env.UV_TOKEN,
@@ -311,24 +348,51 @@ const search = new UserVoiceSearch({
 });
 ```
 
-Example output for `getSuggestionSupporterDetails`:
+You can also reference level names programmatically:
 
-```
-[uservoice-user-search] [INFO]  getSuggestionSupporterDetails: suggestion #12345
-[uservoice-user-search] [INFO]  fetchSuggestionSupporters: suggestion #12345
-[uservoice-user-search] [INFO]    → page 1
-[uservoice-user-search] [REQ]   GET https://mycompany.uservoice.com/api/v2/admin/suggestions/12345/supporters?page=1&per_page=100
-[uservoice-user-search] [RES]   200 https://... — 47 result(s) in 318ms
-[uservoice-user-search] [INFO]  fetchSuggestionSupporters: total 47 supporter(s)
-[uservoice-user-search] [INFO]  getSuggestionSupporterDetails: 47 supporter(s), 23 unique account(s)
-[uservoice-user-search] [INFO]  fetchAccounts: 23 unique account(s), concurrency=5
-[uservoice-user-search] [REQ]   GET https://mycompany.uservoice.com/api/v2/admin/accounts/100
-...
-[uservoice-user-search] [INFO]  fetchAccounts: fetched 23/23 account(s)
-[uservoice-user-search] [INFO]  getSuggestionSupporterDetails: done — 47 row(s) ready
+```js
+import { LOG_LEVELS } from 'uservoice-user-search';
+// LOG_LEVELS = { silent: 0, error: 1, warn: 2, info: 3, debug: 4, verbose: 5 }
 ```
 
-Bearer tokens are **always redacted** in debug output.
+### Example output at each level
+
+**`info`** — just the summary line per public method call:
+```
+[uservoice-user-search] [INFO]    getSuggestionSupporterDetails: suggestion #12345
+[uservoice-user-search] [INFO]    getSuggestionSupporterDetails: 47 supporter(s), 23 unique account(s) to enrich
+[uservoice-user-search] [INFO]    getSuggestionSupporterDetails → 47 row(s), 23/23 accounts enriched in 1842ms
+```
+
+**`debug`** — adds per-request metadata and strategy events:
+```
+[uservoice-user-search] [INFO]    getSuggestionSupporterDetails: suggestion #12345
+[uservoice-user-search] [DEBUG]   → GET https://mycompany.uservoice.com/api/v2/admin/suggestions/12345/supporters?page=1&per_page=100
+[uservoice-user-search] [DEBUG]     headers: {"Authorization":"Bearer [REDACTED]","Accept":"application/json"}
+[uservoice-user-search] [DEBUG]   ← 200 https://... — 47 result(s) in 318ms
+[uservoice-user-search] [DEBUG]   → GET https://mycompany.uservoice.com/api/v2/admin/accounts/100
+[uservoice-user-search] [DEBUG]   ← 200 https://... — 1 result(s) in 94ms
+[uservoice-user-search] [INFO]    getSuggestionSupporterDetails → 47 row(s), 23/23 accounts enriched in 1842ms
+```
+
+**`verbose`** — additionally expands query params and response bodies:
+```
+[uservoice-user-search] [DEBUG]   → GET https://mycompany.uservoice.com/api/v2/admin/accounts/100
+[uservoice-user-search] [VERBOSE]   query params:
+[uservoice-user-search] [VERBOSE]     (none for this path)
+[uservoice-user-search] [DEBUG]   ← 200 https://... — 1 result(s) in 94ms
+[uservoice-user-search] [VERBOSE]   response body (843 chars):
+{
+  "account": {
+    "id": 100,
+    "name": "Acme Corp",
+    "custom_fields": { "ARR": 50000, "Plan": "Enterprise" },
+    ...
+  }
+}
+```
+
+Bearer tokens are **always redacted** regardless of log level.
 
 ---
 
