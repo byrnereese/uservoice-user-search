@@ -1,21 +1,23 @@
 /**
  * Name search strategies.
  *
- * Searching by name is inherently fuzzier than email search. We try three
- * complementary endpoints; each has different strengths:
+ * Searching by name is inherently fuzzier than email search.
  *
- *  1. GET /api/v2/admin/users?q=<name>
+ *  1. GET /api/v2/admin/users?q=<name>   ← primary; confirmed working
  *     — The admin full-text search. Returns full user objects with all fields.
- *       Best option when the token has admin scope.
+ *       On ideas.ringcentral.com this is the only reliable name-search path:
+ *       the autocomplete endpoint returns 404 and the v1 endpoint requires
+ *       HMAC-SHA1 OAuth (not Bearer tokens).
  *
- *  2. GET /api/v2/admin/autocomplete?type=user&q=<name>
- *     — Autocomplete endpoint. Optimised for prefix-matching partial names;
- *       blazing fast but returns fewer fields (id, name, email only).
- *       Useful when strategy 1 returns nothing or errors.
+ *  2. GET /api/v2/admin/autocomplete?type=user&q=<name>   ← fallback
+ *     — Prefix-matching autocomplete. Returns id/name/email only. Included
+ *       as a fallback for other UserVoice instances where Strategy 1 may
+ *       be unavailable.
  *
- *  3. GET /api/v1/users/search.json?query=<name>
- *     — Legacy v1 search. Broader support across plan tiers; slower and
- *       returns a limited field set.
+ *  3. GET /api/v1/users/search.json?query=<name>   ← fallback
+ *     — Legacy v1 search. Requires HMAC-SHA1 on some instances (including
+ *       ideas.ringcentral.com) so it will 401 there, but it's a valid last
+ *       resort for older or differently-configured tenants.
  *
  * All strategies return NormalizedUser[] — an empty array means no matches
  * (not an error). Hard errors bubble up to the orchestrator.

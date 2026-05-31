@@ -7,21 +7,27 @@
  *
  * Strategy order (highest confidence → lowest):
  *
- *  1. GET /api/v2/admin/users?filter[email]=<email>
- *     — Exact-match filter on the admin users collection.
- *       Most precise when the token has admin scope. Some tenants 400 on this
- *       filter key so we catch that and fall through.
- *
- *  2. GET /api/v2/admin/users?filter[email_or_external_id]=<email>
- *     — Alternative filter key used by some UserVoice versions.
- *
- *  3. GET /api/v2/admin/users?q=<email>
+ *  1. GET /api/v2/admin/users?q=<email>
  *     — Free-text search across name + email. Returns ranked results;
- *       we post-filter to the exact email address.
+ *       we post-filter to the exact email address. This is the primary
+ *       strategy because on instances like ideas.ringcentral.com the
+ *       filter[email] variants are silently ignored (they scan all 21M+ users
+ *       and take 10+ seconds each), while q= uses the proper search index
+ *       and resolves in ~150ms.
+ *
+ *  2. GET /api/v2/admin/users?filter[email]=<email>
+ *     — Exact-match filter on the admin users collection. Works natively on
+ *       some UserVoice tenants. Post-filtered here as a safety net in case
+ *       the filter is ignored and unrelated users are returned.
+ *
+ *  3. GET /api/v2/admin/users?filter[email_or_external_id]=<email>
+ *     — Alternative filter key used by some UserVoice versions. Same
+ *       post-filter defence applied.
  *
  *  4. GET /api/v1/users/search.json?query=<email>
  *     — Legacy v1 endpoint. Slower, returns fewer fields, but broadly
- *       supported across all plan tiers.
+ *       supported across all plan tiers. Requires HMAC-SHA1 on some
+ *       instances (e.g. ideas.ringcentral.com) — will 401 there.
  *
  * Each strategy returns a (possibly empty) NormalizedUser[] or throws on a
  * hard error. The orchestrator in src/index.js handles fallback logic.
@@ -48,8 +54,14 @@ export async function v2AdminFilterEmail(client, email, logger) {
     per_page: 10,
   });
 
-  const users = extractUsers(body, name, logger);
-  logger.strategy(name, users.length ? 'success' : 'empty', `${users.length} result(s)`);
+  let users = extractUsers(body, name, logger);
+
+  // Some UserVoice instances silently ignore filter[email] and return unrelated
+  // users. Post-filter to exact email match so we don't return the wrong person.
+  const emailLower = email.toLowerCase();
+  users = users.filter((u) => u.email?.toLowerCase() === emailLower);
+
+  logger.strategy(name, users.length ? 'success' : 'empty', `${users.length} exact match(es)`);
   return users;
 }
 
@@ -70,8 +82,13 @@ export async function v2AdminFilterEmailOrId(client, email, logger) {
     per_page: 10,
   });
 
-  const users = extractUsers(body, name, logger);
-  logger.strategy(name, users.length ? 'success' : 'empty', `${users.length} result(s)`);
+  let users = extractUsers(body, name, logger);
+
+  // Same defense as v2AdminFilterEmail: post-filter against ignored filter keys.
+  const emailLower = email.toLowerCase();
+  users = users.filter((u) => u.email?.toLowerCase() === emailLower);
+
+  logger.strategy(name, users.length ? 'success' : 'empty', `${users.length} exact match(es)`);
   return users;
 }
 
@@ -137,10 +154,10 @@ export async function v1SearchEmail(client, email, logger) {
  * Each entry is `{ name, fn }`.
  */
 export const EMAIL_STRATEGIES = [
-  { name: 'v2AdminFilterEmail',    fn: v2AdminFilterEmail },
-  { name: 'v2AdminFilterEmailOrId', fn: v2AdminFilterEmailOrId },
-  { name: 'v2AdminQueryEmail',     fn: v2AdminQueryEmail },
-  { name: 'v1SearchEmail',         fn: v1SearchEmail },
+  { name: 'v2AdminQueryEmail',      fn: v2AdminQueryEmail },       // q= uses search index: ~150ms
+  { name: 'v2AdminFilterEmail',     fn: v2AdminFilterEmail },      // filter may be ignored on some instances
+  { name: 'v2AdminFilterEmailOrId', fn: v2AdminFilterEmailOrId },  // alternate filter key
+  { name: 'v1SearchEmail',          fn: v1SearchEmail },           // legacy; needs HMAC-SHA1 on some instances
 ];
 
 // ─── Private helpers ─────────────────────────────────────────────────────────

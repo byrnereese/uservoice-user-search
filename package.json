@@ -1,6 +1,6 @@
 {
   "name": "uservoice-user-search",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Reliable multi-strategy user search (by email or name) for the UserVoice API",
   "keywords": [
     "uservoice",

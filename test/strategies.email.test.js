@@ -34,6 +34,19 @@ describe('v2AdminFilterEmail', () => {
     expect(users).toEqual([]);
   });
 
+  it('returns [] when the server ignores the filter and returns unrelated users', async () => {
+    // On some instances (e.g. ideas.ringcentral.com) filter[email] is silently
+    // ignored and the response contains arbitrary users — guard against returning
+    // the wrong person.
+    const client = {
+      get: vi.fn().mockResolvedValue(
+        v2Response([rawV2User({ id: 99, email: 'someone_else@example.com' })]),
+      ),
+    };
+    const users = await v2AdminFilterEmail(client, 'alice@example.com', silentLogger);
+    expect(users).toEqual([]);
+  });
+
   it('bubbles errors from the client', async () => {
     const err = new Error('network fail');
     const client = { get: vi.fn().mockRejectedValue(err) };
@@ -52,6 +65,16 @@ describe('v2AdminFilterEmailOrId', () => {
       'filter[email_or_external_id]': 'alice@example.com',
       per_page: 10,
     });
+  });
+
+  it('returns [] when the server ignores the filter and returns unrelated users', async () => {
+    const client = {
+      get: vi.fn().mockResolvedValue(
+        v2Response([rawV2User({ id: 99, email: 'someone_else@example.com' })]),
+      ),
+    };
+    const users = await v2AdminFilterEmailOrId(client, 'alice@example.com', silentLogger);
+    expect(users).toEqual([]);
   });
 });
 

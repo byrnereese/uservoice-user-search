@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] – 2026-05-30
+
+### Fixed
+
+- **`findByEmail` returning the wrong user on `ideas.ringcentral.com`** — `filter[email]` and `filter[email_or_external_id]` are silently ignored by this instance, causing those strategies to return up to 10 unrelated users and trick the orchestrator into stopping early with the wrong result. Both strategies now post-filter to exact email match, so an ignored filter falls through cleanly to Strategy 3 (`q=email`) which resolves correctly in ~150 ms.
+
+### Changed
+
+- **Email strategy order reversed** — `v2AdminQueryEmail` (`q=email` with post-filter) is now Strategy 1 instead of Strategy 3. On `ideas.ringcentral.com` this reduces `findByEmail` latency from ~21 seconds (two 10-second ignored-filter requests) to ~150 ms. On instances where `filter[email]` works natively, Strategy 2 still handles it correctly.
+
+### Notes
+
+- `findByName` on `ideas.ringcentral.com`: Strategy 1 (`q=name`) is the only working path. Strategy 2 (autocomplete) returns 404 on this instance; Strategy 3 (v1 search) requires HMAC-SHA1 and returns 401. Both are retained as fallbacks for other UserVoice tenants.
+- All filters (`filter[email]`, `filter[name]`, `filter[suggestion_id]`, etc.) are silently ignored by `ideas.ringcentral.com`. The only reliable search parameter is `q=`.
+
 ## [1.2.0] – 2026-05-30
 
 ### Added

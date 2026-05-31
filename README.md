@@ -469,15 +469,17 @@ Bearer tokens are **always redacted** regardless of log level.
 
 ### Email search strategies (in order)
 
-1. **`v2AdminFilterEmail`** — `GET /api/v2/admin/users?filter[email]=<email>` — exact-match filter; most precise when available.
-2. **`v2AdminFilterEmailOrId`** — `GET /api/v2/admin/users?filter[email_or_external_id]=<email>` — alternative filter key used by some UserVoice versions.
-3. **`v2AdminQueryEmail`** — `GET /api/v2/admin/users?q=<email>` — free-text search, post-filtered to exact email matches only.
-4. **`v1SearchEmail`** — `GET /api/v1/users/search.json?query=<email>` — legacy endpoint; broadly supported but returns fewer fields.
+1. **`v2AdminQueryEmail`** — `GET /api/v2/admin/users?q=<email>` — free-text search, post-filtered to exact email match. **Primary strategy.** Uses the proper search index (~150 ms on `ideas.ringcentral.com`).
+2. **`v2AdminFilterEmail`** — `GET /api/v2/admin/users?filter[email]=<email>` — exact-match filter; works natively on some instances. **Post-filtered** even here: on instances that silently ignore the filter and return unrelated users, no false positive is returned.
+3. **`v2AdminFilterEmailOrId`** — `GET /api/v2/admin/users?filter[email_or_external_id]=<email>` — alternative filter key used by some UserVoice versions. Same post-filter defence.
+4. **`v1SearchEmail`** — `GET /api/v1/users/search.json?query=<email>` — legacy endpoint. Requires HMAC-SHA1 OAuth on some instances (including `ideas.ringcentral.com`), where it will 401 and fall through.
+
+> **Note on `ideas.ringcentral.com`:** `filter[email]` and `filter[email_or_external_id]` are silently ignored by this instance (they scan all 21 M+ users and each takes ~10 s). Strategy 1 (`q=email`) is the only fast path and resolves the correct user in ~150 ms.
 
 ### Name search strategies (in order)
 
-1. **`v2AdminQueryName`** — `GET /api/v2/admin/users?q=<name>` — full-text admin search; richest field set.
-2. **`v2AdminAutocomplete`** — `GET /api/v2/admin/autocomplete?type=user&q=<name>` — prefix-optimised; faster for partial names.
+1. **`v2AdminQueryName`** — `GET /api/v2/admin/users?q=<name>` — full-text admin search; richest field set. **The only working strategy on `ideas.ringcentral.com`** (autocomplete returns 404; v1 requires HMAC-SHA1).
+2. **`v2AdminAutocomplete`** — `GET /api/v2/admin/autocomplete?type=user&q=<name>` — prefix-optimised fallback for other instances.
 3. **`v1SearchName`** — `GET /api/v1/users/search.json?query=<name>` — legacy endpoint fallback.
 
 Each strategy stops the chain as soon as it returns results (unless `all: true` is passed to `findByName`). API errors in a single strategy cause a fall-through to the next — only a `429 Too Many Requests` propagates immediately.

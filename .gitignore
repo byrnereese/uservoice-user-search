@@ -9,7 +9,7 @@ coverage/
 
 # Local context files not for version control
 GOOGLE_AI_STUDIO_CONTEXT.md
-debug-live.mjs
+debug-*
 
 # Logs
 logs
